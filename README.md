@@ -22,5 +22,5 @@ Deshalb regelmäßig unter **Daten → Sicherung herunterladen** exportieren.
 In Edge oder Chrome die App-Adresse öffnen → Symbol „App installieren“ in der Adressleiste (oder Button „⤓ Als App installieren“ oben rechts).
 
 ## Veröffentlichen
-Jeder Push auf `main` veröffentlicht über GitHub Actions auf GitHub Pages
-(einmalig: *Settings → Pages → Source: GitHub Actions*). Bei Änderungen an der App `VERSION` in `sw.js` hochzählen.
+GitHub Pages veröffentlicht direkt aus dem Branch `claude/marias-crm-webapp-k4aoor`, Ordner `/ (root)`
+(*Settings → Pages → Deploy from a branch*). Jeder Push dorthin ist nach 1–2 Minuten online. Bei Änderungen an der App `VERSION` in `sw.js` hochzählen.
