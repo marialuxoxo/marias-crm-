@@ -1,0 +1,5 @@
+# Kontaktdaten & Sicherungen gehören NICHT ins (öffentliche) Repo
+*.json
+!manifest.webmanifest
+BNIW_*.html
+bniw-*.html

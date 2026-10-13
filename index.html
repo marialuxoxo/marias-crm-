@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNIW CRM</title>
+<meta name="description" content="Maria's CRM für BNIW-Verwaltungskontakte">
+<meta name="theme-color" content="#0C6E68">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="work">
+<div id="app">
+  <header>
+    <button class="menubtn" id="menu" title="Liste ein-/ausblenden">☰</button>
+    <a href="#/" class="logo"><span class="brand mono">BNIW</span><span class="title">CRM</span></a>
+    <nav id="nav">
+      <a href="#/" data-v="work">Abarbeiten</a>
+      <a href="#/liste" data-v="liste">Kontakte</a>
+      <a href="#/tag" data-v="tag">Mein Tag</a>
+      <a href="#/daten" data-v="daten">Daten</a>
+    </nav>
+    <div class="gsearch">
+      <span class="gicon">🔎</span>
+      <input id="gq" placeholder="Firma, Person, Ort, Telefon, Notiz… (Strg+K)" autocomplete="off">
+      <div id="gres" class="gres" hidden></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="bar" title="Bearbeitete Kontakte"><div class="track"><div class="fill" id="fill"></div></div><span class="tiny mono" id="count">0/0</span></div>
+    <button class="hbtn warn" id="backup" hidden title="Seit längerem keine Sicherung exportiert">⭳ Sichern</button>
+    <button class="hbtn" id="install" hidden>⤓ Als App installieren</button>
+    <span class="tiny mono" id="save">gespeichert</span>
+  </header>
+  <div class="wrap">
+    <aside id="rail" class="hidden">
+      <div style="padding:12px;border-bottom:1px solid var(--line)">
+        <div class="search">⌕<input id="q" placeholder="Liste filtern…"></div>
+        <div class="chips" id="chips">
+          <button class="chip on" data-f="alle">Alle</button>
+          <button class="chip" data-f="offen">Offen</button>
+          <button class="chip" data-f="erledigt">Bearbeitet</button>
+          <button class="chip" data-f="zusagen">Zusagen</button>
+          <button class="chip" data-f="faellig">Wiedervorlage</button>
+        </div>
+        <div class="dash">
+          <a class="tile" href="#/tag"><div class="tn" id="d-calls">0</div><div class="tl">Heute kontaktiert</div></a>
+          <div class="tile"><div class="tn" id="d-bro">0</div><div class="tl">Broschüre</div><div class="td" id="d-bro-t"></div></div>
+          <div class="tile"><div class="tn petrol" id="d-wl">0</div><div class="tl">Warteliste</div><div class="td" id="d-wl-t"></div></div>
+        </div>
+      </div>
+      <div class="list" id="list"></div>
+    </aside>
+    <main id="main"></main>
+  </div>
+</div>
+<div id="modal" class="modal" hidden></div>
+<input type="file" id="file" accept=".json,.html,.htm,application/json,text/html" hidden>
+<script src="app.js"></script>
+</body>
+</html>
