@@ -697,23 +697,43 @@ function importText(text, fileName){
       for (const e of (obj.log || [])) if (e && e.id && !ids.has(e.id)) { log.push(e); le++; }
       log.sort((a, b) => a.t - b.t); logVersion++;
       msgs.push(plural(n, "Firma", "Firmen"), Object.keys(obj.records || {}).length + " Datensätze", plural(le, "Aktivität", "Aktivitäten") + " importiert");
-    } else if (obj && typeof obj === "object" && Object.values(obj).some(v => v && typeof v === "object" && "status" in v)) {
+    } else if (obj && typeof obj === "object") {
       // Export aus der alten HTML-Datei: {id: {status, notes, …}}
-      Object.assign(records, obj);
-      const n = synthLegacy(Object.keys(obj));
-      msgs.push(Object.keys(obj).length + " Notizen/Status übernommen", n ? plural(n, "Verlaufseintrag", "Verlaufseinträge") + " aus Datumsangaben rekonstruiert" : "");
+      const entries = Object.entries(obj).filter(([, v]) => v && typeof v === "object" && "status" in v);
+      const touched = entries.filter(([, v]) => isTouched(v));
+      if (!touched.length) throw new Error(entries.length || !Object.keys(obj).length
+        ? "Die Datei enthält keine bearbeiteten Kontakte – alle stehen auf „offen“, ohne Notizen. Vermutlich stammt der Export aus einem anderen Browser oder Fenster als dem, in dem du gearbeitet hast."
+        : "Unbekanntes Dateiformat.");
+      for (const [id, v] of touched) records[id] = {...def(), ...v};
+      const n = synthLegacy(touched.map(([id]) => id));
+      const by = {}; touched.forEach(([, v]) => { by[v.status] = (by[v.status] || 0) + 1; });
+      msgs.push(plural(touched.length, "bearbeiteter Kontakt", "bearbeitete Kontakte") + " übernommen",
+        STATUS.filter(s => by[s.k]).map(s => `${by[s.k]}× ${s.k}`).join(", "),
+        plural(touched.filter(([, v]) => v.notes).length, "mit Notiz", "mit Notizen"),
+        plural(touched.filter(([, v]) => v.broschuere && v.broschuere.sent).length, "Broschüre", "Broschüren"),
+        n ? plural(n, "Verlaufseintrag", "Verlaufseinträge") + " aus Datumsangaben rekonstruiert" : "");
+      if (touched.some(([id]) => !byId.has(id))) msgs.push("⚠ Einige Kontakte fehlen noch in der Firmenliste – bitte auch die alte HTML-Datei importieren.");
     } else throw new Error("Unbekanntes Dateiformat.");
   }
   save(); flush(); askPersist();
-  return msgs.filter(Boolean).join(" · ");
+  return msgs.filter(Boolean);
+}
+const isTouched = r => r && typeof r === "object" && ((r.status && r.status !== "offen") || r.notes || r.lastContact ||
+  (r.broschuere && r.broschuere.sent) || (r.newsletter && r.newsletter !== "—") || (r.kanal && r.kanal !== "—"));
+function showInfo(title, lines){
+  const m = $("modal");
+  m.innerHTML = `<div class="mbox"><h2>${esc(title)}</h2><ul style="margin-left:18px;font-size:14px;line-height:1.7">${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>
+    <div class="bottom"><button class="btn prim ml" id="infook">OK</button></div></div>`;
+  m.hidden = false; $("infook").focus();
+  $("infook").onclick = () => { m.hidden = true; m.innerHTML = ""; };
 }
 function pickFile(){ $("file").value = ""; $("file").click(); }
 function handleFile(f){
   if (!f) return;
   const rd = new FileReader();
   rd.onload = () => {
-    try { const msg = importText(rd.result, f.name); render(); toast("✓ " + msg); }
-    catch (err) { alert("Datei konnte nicht gelesen werden: " + err.message); }
+    try { const msgs = importText(rd.result, f.name); render(); showInfo("✓ Import erfolgreich", msgs); }
+    catch (err) { showInfo("Import nicht möglich", [err.message]); }
   };
   rd.readAsText(f);
 }
