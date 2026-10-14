@@ -1,5 +1,5 @@
 // Offline-Cache für die App-Dateien. Bei Änderungen an der App VERSION hochzählen.
-const VERSION = "bniw-crm-v2";
+const VERSION = "bniw-crm-v3";
 const FILES = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
   "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 

@@ -104,7 +104,7 @@ function logEv(c, type, data = {}){
   // Schnelle Status-Korrekturen (Verklicker) zu einem Eintrag zusammenfassen
   if (type === "status" && last && last.c === c && last.type === "status" && now - last.t < 120000) {
     last.to = data.to; last.t = now;
-    if (last.from === last.to) log.pop();
+    if (last.from === last.to && !last.retry) log.pop();
     logVersion++; return;
   }
   // Allgemeine Notizen: ein Eintrag pro Kontakt und Tag
@@ -130,7 +130,8 @@ function actText(id){
 }
 function describe(e){
   switch (e.type) {
-    case "status": return `Status → <b style="color:${sc(e.to)}">${esc(e.to)}</b>` + (e.from && e.from !== "offen" ? ` <span class="tiny">(vorher ${esc(e.from)})</span>` : "");
+    case "status": if (e.retry && e.from === e.to) return `📞 Erneut <b style="color:${sc(e.to)}">${esc(e.to)}</b>`;
+      return `Status → <b style="color:${sc(e.to)}">${esc(e.to)}</b>` + (e.from && e.from !== "offen" ? ` <span class="tiny">(vorher ${esc(e.from)})</span>` : "");
     case "bro": return e.on ? "📄 Broschüre gesendet" : "Broschüre zurückgenommen";
     case "news": return "Newsletter/Warteliste: <b>" + esc(e.to) + "</b>";
     case "kanal": return "Kanal: " + esc(e.to);
@@ -207,7 +208,7 @@ function noteSnippet(c, q){
 }
 
 /* ---------- UI-Zustand & Routing ---------- */
-let view = "work", curId = null, filter = "alle", railQ = "";
+let view = "work", curId = null, filter = "todo", railQ = "";
 let listQ = "", listStatus = "alle", listSort = {k: "name", dir: 1}, listLimit = LIST_STEP;
 let dayK = today(), dayMode = "chrono", actKind = "Anruf", showPersonForm = false;
 
@@ -244,44 +245,58 @@ function render(){
 }
 
 /* ---------- Kennzahlen ---------- */
+/** Anrufversuch = jeder Status außer „offen" (auch „nicht erreicht") oder eine erfasste Aktivität „Anruf" */
+const isAttempt = e => (e.type === "status" && e.to !== "offen") || (e.type === "act" && e.kind === "Anruf");
 function dayStats(k){
   const evs = log.filter(e => dayKey(e.t) === k);
   const final = new Map();
   evs.forEach(e => { if (e.type === "status") final.set(e.c, e.to); });
-  const touched = [...final].filter(([, s]) => s !== "offen");
+  const attempts = [...new Set(evs.filter(isAttempt).map(e => e.c))];
+  const reached = attempts.filter(c => REACHED.has(final.get(c) ?? get(c).status));
   const distinct = type => new Set(evs.filter(type).map(e => e.c)).size;
   return {
     evs,
-    kontaktiert: touched.length,
-    erreicht: touched.filter(([, s]) => REACHED.has(s)).length,
-    nicht: touched.filter(([, s]) => s === "nicht erreicht").length,
-    zusagen: touched.filter(([, s]) => s === "Infos zugesagt").length,
+    anrufe: attempts.length,
+    erreicht: reached.length,
+    nicht: attempts.length - reached.length,
+    zusagen: [...final].filter(([, s]) => s === "Infos zugesagt").length,
     bro: distinct(e => e.type === "bro" && e.on),
     wl: distinct(e => e.type === "news" && e.to === "Warteliste"),
     notizen: evs.filter(e => e.type === "act" || e.type === "notes").length,
     firmen: new Set(evs.map(e => e.c)).size,
   };
 }
-function contactsPerDay(){
+function attemptsPerDay(){
   const m = new Map();
   const seen = new Set();
   for (const e of log) {
-    if (e.type !== "status" || e.to === "offen") continue;
+    if (!isAttempt(e)) continue;
     const k = dayKey(e.t), key = k + "|" + e.c;
     if (seen.has(key)) continue; seen.add(key);
     m.set(k, (m.get(k) || 0) + 1);
   }
   return m;
 }
+let triesV = -1, tries = new Map();
+/** Wie oft ein Kontakt als „nicht erreicht" protokolliert wurde */
+function triesOf(id){
+  if (triesV !== logVersion) {
+    tries = new Map();
+    for (const e of log) if (e.type === "status" && e.to === "nicht erreicht") tries.set(e.c, (tries.get(e.c) || 0) + 1);
+    triesV = logVersion;
+  }
+  return tries.get(id) || 0;
+}
 function progress(){
   const n = contacts.length;
-  let done = 0, wins = 0, wl = 0;
-  for (const c of contacts) { const r = get(c.id); if (!isOpen(r.status)) done++; if (r.broschuere && r.broschuere.sent) wins++; if (r.newsletter === "Warteliste") wl++; }
+  let done = 0, reached = 0, wins = 0, wl = 0;
+  for (const c of contacts) { const r = get(c.id); if (r.status !== "offen") done++; if (REACHED.has(r.status)) reached++; if (r.broschuere && r.broschuere.sent) wins++; if (r.newsletter === "Warteliste") wl++; }
   $("fill").style.width = (n ? done / n * 100 : 0) + "%";
   $("count").textContent = done + "/" + n;
+  $("count").parentElement.title = `${done} angerufen (davon ${reached} erreicht, ${done - reached} nicht erreicht) von ${n}`;
   if (view !== "work") return;
   const st = dayStats(today());
-  $("d-calls").textContent = st.kontaktiert;
+  $("d-calls").textContent = st.anrufe;
   $("d-bro").textContent = wins; $("d-wl").textContent = wl;
   $("d-bro-t").textContent = st.bro ? "heute +" + st.bro : "";
   $("d-wl-t").textContent = st.wl ? "heute +" + st.wl : "";
@@ -299,21 +314,26 @@ function filteredRail(){
   const q = parseQ(railQ), td = today();
   const res = contacts.filter(c => {
     const r = get(c.id);
-    if (filter === "offen" && !isOpen(r.status)) return false;
-    if (filter === "erledigt" && isOpen(r.status)) return false;
-    if (filter === "zusagen" && r.status !== "Infos zugesagt") return false;
+    // Zu erledigen: noch nicht erreicht – plus fällige Wiedervorlagen (z. B. vereinbarter Rückruf)
+    if (filter === "todo" && !isOpen(r.status) && !isDue(r)) return false;
+    if (filter === "nicht" && r.status !== "nicht erreicht") return false;
+    if (filter === "erreicht" && !REACHED.has(r.status)) return false;
     if (filter === "faellig" && !isDue(r)) return false;
     return !q.terms.length || !!match(c, q);
   });
-  const prio = c => { const r = get(c.id); if (isDue(r)) return 0; if (r.status === "nicht erreicht" && r.lastContact && r.lastContact < td) return 1; return 2; };
+  // Reihenfolge: fällige Wiedervorlagen, nochmal versuchen, neue – heute schon Angerufene ans Ende
+  const prio = c => { const r = get(c.id); if (isDue(r)) return 0; if (r.status === "nicht erreicht") return r.lastContact && r.lastContact < td ? 1 : 3; return 2; };
   return res.map((c, i) => [prio(c), i, c]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
 }
 function renderRail(){
+  const td = today();
   const fl = filteredRail(); const list = $("list");
   const shown = fl.slice(0, RAIL_CAP);
   list.innerHTML = shown.map(c => {
     const r = get(c.id); const on = c.id === curId ? " on" : "";
-    const due = isDue(r) ? ` <span class="badge due">⏰ ${fmt(r.followUp).slice(0, 5)}</span>` : "";
+    const n = r.status === "nicht erreicht" ? triesOf(c.id) : 0;
+    const due = (isDue(r) ? ` <span class="badge due">⏰ ${fmt(r.followUp).slice(0, 5)}</span>` : "")
+      + (n ? ` <span class="badge" title="${n}× nicht erreicht, zuletzt ${fmt(r.lastContact)}">📵 ${n}×${r.lastContact === td ? " · heute" : ""}</span>` : "");
     return `<button class="row${on}" data-id="${esc(c.id)}"><span class="dot" style="background:${sc(r.status)}"></span>` +
       `<span style="min-width:0"><span class="n">${esc(c.name)}</span><span class="s">${esc(c.ort)} · ${esc(gfName(c.gf)) || "—"}${due}</span></span></button>`;
   }).join("")
@@ -339,7 +359,16 @@ function step(d, beforeChange){
 }
 function changeStatus(id, st){
   const r = rec(id); const from = r.status;
-  if (from === st) return;
+  if (from === st) {
+    if (st !== "nicht erreicht") return;
+    // Erneut nicht erreicht → zählt als neuer Anrufversuch
+    const before = triesOf(id);
+    r.lastContact = today();
+    logEv(id, "status", {from, to: st, retry: true});
+    save();
+    toast(triesOf(id) > before ? "Neuer Anrufversuch gezählt (" + triesOf(id) + "× nicht erreicht)" : "Gerade eben schon gezählt");
+    return;
+  }
   r.status = st;
   if (st !== "offen") r.lastContact = today();
   logEv(id, "status", {from, to: st});
@@ -355,7 +384,7 @@ function renderWork(){
   const liKw = encodeURIComponent((gfName(c.gf) + " " + c.name.replace(/\b(GmbH|AG|mbH|eG|KG|Co\.?)\b/gi, "").trim()).trim());
   const li = "https://www.linkedin.com/search/results/people/?keywords=" + liKw;
   const web = safeUrl(c.website);
-  const pills = STATUS.map(s => { const on = r.status === s.k; return `<button class="pill" data-st="${esc(s.k)}" style="${on ? `background:${s.c};color:#fff;border-color:${s.c}` : ""}">${esc(s.k)}</button>`; }).join("");
+  const pills = STATUS.map(s => { const on = r.status === s.k; return `<button class="pill" data-st="${esc(s.k)}" ${on && s.k === "nicht erreicht" ? `title="Nochmal nicht erreicht? Klicken zählt einen neuen Versuch."` : ""} style="${on ? `background:${s.c};color:#fff;border-color:${s.c}` : ""}">${esc(s.k)}</button>`; }).join("");
   const opt = (arr, v) => arr.map(k => `<option ${k === v ? "selected" : ""}>${esc(k)}</option>`).join("");
   const people = (r.people || []).map((p, i) => `
      <div class="person"><span><span class="pn">${esc(p.name)}</span>${p.rolle ? ` <span class="pr">· ${esc(p.rolle)}</span>` : ""}</span>
@@ -367,7 +396,7 @@ function renderWork(){
     return `<div class="tl-item" style="--c:${evColor(e)}"><div class="tl-when">${longDate(dayKey(e.t))}${e.legacy ? "" : " · " + timeOf(e.t)}${e.legacy ? ' <span class="legacy">(aus Altdaten)</span>' : ""}</div>
       <div>${describe(e)}</div>${txt && e.type === "act" ? `<div class="tl-note">${esc(txt)}</div>` : ""}</div>`;
   }).join("") : `<div class="empty">Noch keine Aktivität.</div>`;
-  const posLbl = pos >= 0 ? `KONTAKT ${pos + 1} / ${fl.length}` : `AUSSERHALB DES FILTERS`;
+  const posLbl = pos >= 0 ? `KONTAKT ${pos + 1} / ${fl.length}` : (REACHED.has(r.status) && filter === "todo" ? `ERREICHT ✓ – NICHT MEHR IN DER LISTE` : `AUSSERHALB DES FILTERS`);
 
   $("main").innerHTML = `<div class="rec">
    <div class="navrow"><span class="pos mono">${posLbl}</span>
@@ -382,7 +411,7 @@ function renderWork(){
        <a class="act ${web ? "" : "dis"}" href="${esc(web)}" target="_blank" rel="noreferrer">🌐 Website</a>
        <a class="act" href="${li}" target="_blank" rel="noreferrer">Auf LinkedIn suchen ↗</a>
      </div></div>
-   <div style="margin-top:20px"><span class="lbl mono">STATUS</span><div class="pills" id="pills">${pills}</div></div>
+   <div style="margin-top:20px"><span class="lbl mono">STATUS${triesOf(curId) ? ` · ${triesOf(curId)}× NICHT ERREICHT` : ""}</span><div class="pills" id="pills">${pills}</div></div>
    <div class="grid">
      <div class="fld"><label class="mono">KANAL</label><select id="kanal">${opt(KANAL, r.kanal)}</select></div>
      <div class="fld"><label class="mono">NEWSLETTER / WARTELISTE</label><select id="news">${opt(NEWS, r.newsletter)}</select></div>
@@ -574,7 +603,7 @@ function renderListBody(){
 function renderDay(){
   const k = dayK, td = today();
   const st = dayStats(k);
-  const perDay = contactsPerDay();
+  const perDay = attemptsPerDay();
   // Diagramm: 14 Tage, endet heute – oder am gewählten Tag, wenn der weiter zurückliegt
   const end = k > addDays(td, -CHART_DAYS + 1) ? td : k;
   const days = []; for (let i = CHART_DAYS - 1; i >= 0; i--) days.push(addDays(end, -i));
@@ -609,17 +638,17 @@ function renderDay(){
         ${k !== td ? `<button class="btn small" id="dtoday">Heute</button>` : ""}
         <button class="btn small" id="dcopy" title="Zusammenfassung in die Zwischenablage">⧉ Tagesbericht kopieren</button></div></div>
     <div class="kpis">
-      ${kpi(st.kontaktiert, "Kontaktiert", `${st.erreicht} erreicht · ${st.nicht} nicht erreicht`)}
+      ${kpi(st.anrufe, "Anrufversuche", `${st.erreicht} erreicht · ${st.nicht} nicht erreicht`)}
       ${kpi(st.zusagen, "Infos zugesagt")}
       ${kpi(st.bro, "Broschüren")}
       ${kpi(st.wl, "Warteliste")}
       ${kpi(st.notizen, "Notizen & Aktivitäten")}
       ${kpi(st.firmen, "Firmen bearbeitet")}
     </div>
-    <div class="chart" role="img" aria-label="Kontaktierte Firmen pro Tag, letzte ${CHART_DAYS} Tage">
-      <div class="tiny" style="display:flex"><span>Kontaktierte Firmen pro Tag</span><span class="ml">${fmt(days[0]).slice(0, 5)} – ${fmt(days[days.length - 1]).slice(0, 5)}</span></div>
+    <div class="chart" role="img" aria-label="Anrufversuche pro Tag, letzte ${CHART_DAYS} Tage">
+      <div class="tiny" style="display:flex"><span>Anrufversuche pro Tag (inkl. nicht erreicht)</span><span class="ml">${fmt(days[0]).slice(0, 5)} – ${fmt(days[days.length - 1]).slice(0, 5)}</span></div>
       <div class="bars">${days.map(d => { const v = perDay.get(d) || 0;
-        return `<button class="bcol ${d === k ? "sel" : ""}" data-d="${d}" title="${WEEKDAY[parseDay(d).getDay()].slice(0, 2)} ${fmt(d)}: ${v} kontaktiert"><span class="bv">${v}</span><span class="b" style="height:${v / max * 100}%"></span></button>`; }).join("")}</div>
+        return `<button class="bcol ${d === k ? "sel" : ""}" data-d="${d}" title="${WEEKDAY[parseDay(d).getDay()].slice(0, 2)} ${fmt(d)}: ${v} Anrufversuche"><span class="bv">${v}</span><span class="b" style="height:${v / max * 100}%"></span></button>`; }).join("")}</div>
       <div class="blabels">${days.map(d => { const wd = parseDay(d).getDay(); return `<span class="${wd === 0 || wd === 6 ? "we" : ""} ${d === k ? "sel" : ""}">${WEEKDAY[wd].slice(0, 2)}<br>${d.slice(8)}</span>`; }).join("")}</div>
     </div>
     <div class="cols">
@@ -648,10 +677,10 @@ function renderDay(){
   document.querySelectorAll(".bcol").forEach(b => b.onclick = () => go(b.dataset.d));
   document.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { dayMode = b.dataset.m; renderDay(); });
   document.querySelectorAll("[data-done]").forEach(b => b.onclick = () => { const id = b.dataset.done; rec(id).followUp = ""; logEv(id, "followup", {to: ""}); save(); renderDay(); });
-  if ($("gowork")) $("gowork").onclick = () => { filter = "offen"; document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.f === "offen")); };
+  if ($("gowork")) $("gowork").onclick = () => { filter = "todo"; document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.f === "todo")); };
   $("dcopy").onclick = () => {
     const lines = [`Tagesbericht ${longDate(k)}`, "",
-      `Kontaktiert: ${st.kontaktiert} (erreicht ${st.erreicht}, nicht erreicht ${st.nicht})`,
+      `Anrufversuche: ${st.anrufe} (erreicht ${st.erreicht}, nicht erreicht ${st.nicht})`,
       `Infos zugesagt: ${st.zusagen} · Broschüren: ${st.bro} · Warteliste: ${st.wl}`, "", "Verlauf:"];
     st.evs.forEach(e => { const c = byId.get(e.c); const tmp = document.createElement("div"); tmp.innerHTML = describe(e);
       lines.push(`${e.legacy ? "  –  " : timeOf(e.t)}  ${c ? c.name : "(gelöscht)"} – ${tmp.textContent}${evText(e) && e.type === "act" ? ": " + evText(e).replace(/\s+/g, " ") : ""}`); });

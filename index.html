@@ -28,7 +28,7 @@
       <div id="gres" class="gres" hidden></div>
     </div>
     <div class="spacer"></div>
-    <div class="bar" title="Bearbeitete Kontakte"><div class="track"><div class="fill" id="fill"></div></div><span class="tiny mono" id="count">0/0</span></div>
+    <div class="bar" title="Angerufene Kontakte"><div class="track"><div class="fill" id="fill"></div></div><span class="tiny mono" id="count">0/0</span></div>
     <button class="hbtn warn" id="backup" hidden title="Seit längerem keine Sicherung exportiert">⭳ Sichern</button>
     <button class="hbtn" id="install" hidden>⤓ Als App installieren</button>
     <span class="tiny mono" id="save">gespeichert</span>
@@ -38,14 +38,14 @@
       <div style="padding:12px;border-bottom:1px solid var(--line)">
         <div class="search">⌕<input id="q" placeholder="Liste filtern…"></div>
         <div class="chips" id="chips">
-          <button class="chip on" data-f="alle">Alle</button>
-          <button class="chip" data-f="offen">Offen</button>
-          <button class="chip" data-f="erledigt">Bearbeitet</button>
-          <button class="chip" data-f="zusagen">Zusagen</button>
+          <button class="chip on" data-f="todo" title="Offen und nicht erreicht – Erreichte verschwinden aus der Liste">Zu erledigen</button>
+          <button class="chip" data-f="nicht">Nicht erreicht</button>
           <button class="chip" data-f="faellig">Wiedervorlage</button>
+          <button class="chip" data-f="erreicht">Erreicht</button>
+          <button class="chip" data-f="alle">Alle</button>
         </div>
         <div class="dash">
-          <a class="tile" href="#/tag"><div class="tn" id="d-calls">0</div><div class="tl">Heute kontaktiert</div></a>
+          <a class="tile" href="#/tag"><div class="tn" id="d-calls">0</div><div class="tl">Anrufe heute</div></a>
           <div class="tile"><div class="tn" id="d-bro">0</div><div class="tl">Broschüre</div><div class="td" id="d-bro-t"></div></div>
           <div class="tile"><div class="tn petrol" id="d-wl">0</div><div class="tl">Warteliste</div><div class="td" id="d-wl-t"></div></div>
         </div>
