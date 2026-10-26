@@ -321,9 +321,21 @@ function filteredRail(){
     if (filter === "faellig" && !isDue(r)) return false;
     return !q.terms.length || !!match(c, q);
   });
-  // Reihenfolge: fällige Wiedervorlagen, nochmal versuchen, neue – heute schon Angerufene ans Ende
+  const rk = railRank();
+  return res.sort((a, b) => (rk.get(a.id) ?? 1e9) - (rk.get(b.id) ?? 1e9));
+}
+/* Reihenfolge: fällige Wiedervorlagen, nochmal versuchen, neue – heute schon Angerufene ans Ende.
+   Die Reihenfolge wird eingefroren und nur neu berechnet, wenn Filter, Suche oder Tag wechseln
+   (oder die App neu geladen wird) – sonst würde ein Klick auf „nicht erreicht" den Kontakt
+   mitten im Abarbeiten ans Listenende schieben. */
+let rankKey = "", rankMap = new Map();
+function railRank(){
+  const td = today(), key = filter + "|" + railQ + "|" + td + "|" + contacts.length;
+  if (key === rankKey) return rankMap;
   const prio = c => { const r = get(c.id); if (isDue(r)) return 0; if (r.status === "nicht erreicht") return r.lastContact && r.lastContact < td ? 1 : 3; return 2; };
-  return res.map((c, i) => [prio(c), i, c]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+  rankMap = new Map(contacts.map((c, i) => [prio(c), i, c.id]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x, i) => [x[2], i]));
+  rankKey = key;
+  return rankMap;
 }
 function renderRail(){
   const td = today();
@@ -345,12 +357,14 @@ function renderRail(){
 const isVisible = (el, box) => { const a = el.getBoundingClientRect(), b = box.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; };
 
 function step(d, beforeChange){
-  const f0 = filteredRail(); const p0 = f0.findIndex(x => x.id === curId);
   if (beforeChange) beforeChange();
-  const f1 = filteredRail(); const p1 = f1.findIndex(x => x.id === curId);
+  const f = filteredRail(); const p = f.findIndex(x => x.id === curId);
   let next;
-  if (p1 >= 0) next = f1[Math.min(Math.max(p1 + d, 0), f1.length - 1)];
-  else next = f1[Math.min(Math.max(d > 0 ? p0 : p0 - 1, 0), f1.length - 1)]; // aktueller Kontakt ist aus dem Filter gefallen
+  if (p >= 0) next = f[Math.min(Math.max(p + d, 0), f.length - 1)];
+  else { // aktueller Kontakt ist aus dem Filter gefallen (z. B. erreicht) → Nachbar an seiner bisherigen Stelle
+    const rk = railRank(), mine = rk.get(curId) ?? -1, at = c => rk.get(c.id) ?? 1e9;
+    next = d > 0 ? (f.find(c => at(c) > mine) || f[f.length - 1]) : ([...f].reverse().find(c => at(c) < mine) || f[0]);
+  }
   if (next) curId = next.id;
   history.replaceState(null, "", "#/kontakt/" + encodeURIComponent(curId));
   showPersonForm = false;
@@ -437,7 +451,7 @@ function renderWork(){
 
    <div class="bottom">
      <button class="btn" id="bprev" ${pos === 0 ? "disabled" : ""}>‹ Zurück</button>
-     <button class="btn prim ml" id="bnext">Als kontaktiert &amp; weiter ›</button>
+     <button class="btn prim ml" id="bnext">${r.status === "offen" ? "Als kontaktiert &amp; weiter ›" : "Weiter ›"}</button>
    </div>
 
    <div class="section"><span class="lbl mono">AKTIVITÄT</span>
