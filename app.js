@@ -650,7 +650,7 @@ function renderDay(){
       <div class="daynav ml"><button class="iconbtn" id="dprev" title="Vorheriger Tag">‹</button>
         <input type="date" id="dpick" value="${k}" max="${td}"><button class="iconbtn" id="dnext" ${k >= td ? "disabled" : ""} title="Nächster Tag">›</button>
         ${k !== td ? `<button class="btn small" id="dtoday">Heute</button>` : ""}
-        <button class="btn small" id="dcopy" title="Zusammenfassung in die Zwischenablage">⧉ Tagesbericht kopieren</button></div></div>
+        <button class="btn small petrol" id="dcopy" title="Anrufliste dieses Tages als PDF herunterladen">📄 Tagesliste als PDF</button></div></div>
     <div class="kpis">
       ${kpi(st.anrufe, "Anrufversuche", `${st.erreicht} erreicht · ${st.nicht} nicht erreicht`)}
       ${kpi(st.zusagen, "Infos zugesagt")}
@@ -692,14 +692,128 @@ function renderDay(){
   document.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { dayMode = b.dataset.m; renderDay(); });
   document.querySelectorAll("[data-done]").forEach(b => b.onclick = () => { const id = b.dataset.done; rec(id).followUp = ""; logEv(id, "followup", {to: ""}); save(); renderDay(); });
   if ($("gowork")) $("gowork").onclick = () => { filter = "todo"; document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.f === "todo")); };
-  $("dcopy").onclick = () => {
-    const lines = [`Tagesbericht ${longDate(k)}`, "",
-      `Anrufversuche: ${st.anrufe} (erreicht ${st.erreicht}, nicht erreicht ${st.nicht})`,
-      `Infos zugesagt: ${st.zusagen} · Broschüren: ${st.bro} · Warteliste: ${st.wl}`, "", "Verlauf:"];
-    st.evs.forEach(e => { const c = byId.get(e.c); const tmp = document.createElement("div"); tmp.innerHTML = describe(e);
-      lines.push(`${e.legacy ? "  –  " : timeOf(e.t)}  ${c ? c.name : "(gelöscht)"} – ${tmp.textContent}${evText(e) && e.type === "act" ? ": " + evText(e).replace(/\s+/g, " ") : ""}`); });
-    copyText(lines.join("\n")); toast("Tagesbericht kopiert");
+  $("dcopy").onclick = () => exportDayPdf(k);
+}
+
+
+/* ---------- Tagesliste als PDF (Vorlage „BNIW · Meine Anrufliste") ---------- */
+const MONTHS = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+const fullDate = k => { const d = parseDay(k); return `${WEEKDAY[d.getDay()]}, ${d.getDate()}. ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
+function loadScript(src){
+  return new Promise((res, rej) => { if (window.jspdf) return res(); const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("PDF-Bibliothek konnte nicht geladen werden")); document.head.appendChild(s); });
+}
+/** Alle Firmen, die an diesem Tag angerufen wurden – in der Reihenfolge des ersten Anrufs */
+function dayCallRows(k){
+  const evs = log.filter(e => dayKey(e.t) === k);
+  const order = [], seen = new Set();
+  evs.forEach(e => { if (isAttempt(e) && !seen.has(e.c)) { seen.add(e.c); order.push(e.c); } });
+  return order.map(id => {
+    const c = byId.get(id) || {name: "(gelöschte Firma)", ort: "", tel: ""}, r = get(id);
+    const mine = evs.filter(e => e.c === id);
+    let status = r.status; mine.forEach(e => { if (e.type === "status") status = e.to; });
+    const bro = mine.some(e => e.type === "bro" && e.on) || (r.broschuere && r.broschuere.sent && r.broschuere.date === k);
+    const acts = mine.filter(e => e.type === "act" && e.text).map(e => e.text);
+    const note = (acts.length ? acts.join(" · ") : (r.notes || "")).replace(/\s*\n+\s*/g, " · ").trim();
+    return {name: c.name, ort: c.ort || "", tel: c.tel || "", reached: REACHED.has(status), bro, note};
+  });
+}
+// Standard-PDF-Schriften kennen nur westeuropäische Zeichen – Emojis u. Ä. entfernen
+const pdfText = t => String(t || "").replace(/[^\u0000-ÿ€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]/g, "").replace(/\s{2,}/g, " ").trim();
+
+async function exportDayPdf(k){
+  try { await loadScript("vendor/jspdf.umd.min.js"); }
+  catch (e) { showInfo("PDF nicht möglich", [e.message, "Bitte einmal mit Internetverbindung öffnen."]); return; }
+  const rows = dayCallRows(k);
+  if (!rows.length) { toast("An diesem Tag gibt es keine Anrufe"); return; }
+  const doc = new window.jspdf.jsPDF({unit: "mm", format: "a4"});
+  const C = {berry: "#B3386B", plum: "#8E2457", dark: "#3D2335", ink: "#3A2433", grey: "#8A7480", pale: "#FBF0F5", row: "#FCF6F9", line: "#F0DCE5", box: "#E9C6D5", teal: "#17736B"};
+  const W = 210, M = 15, R = W - M, PH = 297, BOTTOM = PH - 16;
+  const cols = [{k: "nr", w: 8}, {k: "firma", w: 64, l: "FIRMA"}, {k: "tel", w: 32, l: "TELEFON"},
+    {k: "a", w: 13, l: ["ANGE-", "RUFEN"]}, {k: "e", w: 13, l: ["ER-", "REICHT"]}, {k: "b", w: 13, l: ["BRO-", "SCHÜRE"]}, {k: "note", w: 37, l: "NOTIZ"}];
+  let x = M; cols.forEach(c => { c.x = x; x += c.w; });
+  const col = key => cols.find(c => c.k === key);
+  const font = (style, size, color) => { doc.setFont("helvetica", style); doc.setFontSize(size); doc.setTextColor(color); };
+  // Text mit Sperrung – jsPDF rechnet die Sperrung bei align nicht mit ein, daher selbst ausrichten
+  const spaced = (t, x, y, cs, align) => {
+    const w = doc.getTextWidth(t) + cs * (t.length - 1);
+    doc.text(t, align === "right" ? x - w : align === "center" ? x - w / 2 : x, y, {charSpace: cs});
   };
+
+  const tableHead = y => {
+    doc.setFillColor(C.berry); doc.rect(M, y, R - M, 11, "F");
+    font("bold", 6.5, "#FFFFFF");
+    doc.text("#", col("nr").x + 3, y + 6.8);
+    cols.forEach(c => { if (!c.l) return;
+      if (Array.isArray(c.l)) doc.text(c.l, c.x + c.w / 2, y + 5, {align: "center", lineHeightFactor: 1.1});
+      else doc.text(c.l, c.x + 2, y + 6.8); });
+    return y + 11;
+  };
+  const check = (cx, cy, on, color) => {
+    const s = 4.6;
+    doc.setLineWidth(0.3);
+    if (on) { doc.setFillColor(color); doc.roundedRect(cx - s / 2, cy - s / 2, s, s, 1, 1, "F");
+      doc.setDrawColor("#FFFFFF"); doc.setLineWidth(0.35); doc.setLineCap("round");
+      doc.line(cx - 1.1, cy + 0.05, cx - 0.3, cy + 0.85); doc.line(cx - 0.3, cy + 0.85, cx + 1.2, cy - 0.8); }
+    else { doc.setDrawColor(C.box); doc.roundedRect(cx - s / 2, cy - s / 2, s, s, 1, 1, "S"); }
+  };
+
+  // Kopf
+  doc.setFillColor(C.berry); doc.rect(M, 10, R - M, 1.2, "F");
+  font("bold", 7, C.berry); doc.text("BNIW · TAGESLISTE", M + 2, 19, {charSpace: 0.6});
+  doc.setFont("times", "bold"); doc.setFontSize(20); doc.setTextColor(C.plum); doc.text("Meine Anrufliste", M + 2, 27);
+  font("normal", 9.5, C.grey); doc.text(fullDate(k), M + 2, 33);
+  font("normal", 6, C.grey);
+  ["BNIW", "BERATERNETZWERK", "IMMOBILIENWIRTSCHAFT"].forEach((t, i) => spaced(t, R - 2, 20 + i * 3.6, 0.5, "right"));
+
+  // Kennzahlen
+  const reached = rows.filter(r => r.reached).length, bros = rows.filter(r => r.bro).length;
+  let y = 37;
+  doc.setFillColor(C.pale); doc.rect(M, y, R - M, 22, "F");
+  const kw = (R - M - 4 * 6) / 3;
+  [[rows.length, "ANGERUFEN"], [reached, "ERREICHT"], [bros, "BROSCHÜRE"]].forEach(([v, l], i) => {
+    const bx = M + 6 + i * (kw + 6);
+    doc.setFillColor("#FFFFFF"); doc.setDrawColor(C.line); doc.setLineWidth(0.3); doc.roundedRect(bx, y + 4, kw, 14, 2, 2, "FD");
+    font("bold", 14, C.plum); doc.text(String(v), bx + kw / 2, y + 11, {align: "center"});
+    font("normal", 6.5, C.grey); spaced(l, bx + kw / 2, y + 15.5, 0.3, "center");
+  });
+  y = tableHead(y + 22);
+  doc.setFillColor(C.dark); doc.rect(M, y, R - M, 7, "F");
+  font("bold", 7, "#FFFFFF"); doc.text("HEUTE BEARBEITET", M + 3, y + 4.6, {charSpace: 0.4});
+  y += 7;
+
+  // Zeilen
+  rows.forEach((r, i) => {
+    font("bold", 9, C.ink);
+    const nameL = doc.splitTextToSize(pdfText(r.name), col("firma").w - 4);
+    font("normal", 7, C.ink);
+    let noteL = doc.splitTextToSize(pdfText(r.note), col("note").w - 3);
+    if (noteL.length > 4) { noteL = noteL.slice(0, 4); noteL[3] = noteL[3].replace(/\s*\S*$/, "") + " …"; }
+    const h = Math.max(nameL.length * 3.9 + (r.ort ? 3.6 : 0), noteL.length * 3.1) + 5.5;
+    if (y + h > BOTTOM) { doc.addPage(); y = tableHead(12); }
+    doc.setFillColor(i % 2 ? C.row : "#FFFFFF"); doc.rect(M, y, R - M, h, "F");
+    doc.setDrawColor(C.line); doc.setLineWidth(0.25); doc.line(M, y + h, R, y + h);
+    const mid = y + h / 2;
+    font("normal", 7.5, C.grey); doc.text(String(i + 1), col("nr").x + 3, mid + 1);
+    font("bold", 9, C.ink); doc.text(nameL, col("firma").x + 2, y + 5.3, {lineHeightFactor: 1.25});
+    if (r.ort) { font("normal", 6.8, C.grey); doc.text(pdfText(r.ort), col("firma").x + 2, y + 5.3 + nameL.length * 3.9); }
+    doc.setFont("courier", "normal"); doc.setFontSize(8.5); doc.setTextColor(C.plum); doc.text(pdfText(r.tel) || "–", col("tel").x + 2, mid + 1);
+    check(col("a").x + col("a").w / 2, mid, true, C.berry);
+    check(col("e").x + col("e").w / 2, mid, r.reached, C.berry);
+    check(col("b").x + col("b").w / 2, mid, r.bro, C.teal);
+    if (noteL.length) { font("normal", 7, C.ink); doc.text(noteL, col("note").x + 2, mid + 1 - (noteL.length - 1) * 1.55, {lineHeightFactor: 1.25}); }
+    y += h;
+  });
+
+  // Fußzeile
+  const n = doc.getNumberOfPages(), stamp = new Date().toLocaleString("de-DE", {dateStyle: "short", timeStyle: "short"});
+  for (let p = 1; p <= n; p++) {
+    doc.setPage(p); font("normal", 6.5, C.grey);
+    doc.text(`BNIW · Anrufliste vom ${fmt(k)}`, M, PH - 8);
+    doc.text(`Seite ${p} / ${n} · erstellt ${stamp}`, R, PH - 8, {align: "right"});
+  }
+  const [yy, mm, dd] = k.split("-");
+  doc.save(`BNIW_Anrufliste_${dd}-${mm}${yy === String(new Date().getFullYear()) ? "" : "-" + yy}.pdf`);
+  toast("PDF heruntergeladen");
 }
 
 /* ---------- Import / Export ---------- */

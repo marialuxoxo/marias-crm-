@@ -7,7 +7,7 @@ Kleines CRM zum Abarbeiten der BNIW-Verwaltungskontakte – als installierbare W
 ## Was es kann
 - **Abarbeiten** – wie bisher: Kontakt für Kontakt durchgehen, Status setzen, Broschüre, Warteliste, Notizen. Neu: Wiedervorlage-Datum, Ansprechpartner pro Firma, Aktivitäten (Anruf / Notiz / E-Mail / Meeting) mit Verlauf.
 - **Kontakte** – Tabelle aller Firmen, sortierbar, filterbar, Volltextsuche (auch in Notizen und Ansprechpartnern), Firmen anlegen/bearbeiten.
-- **Mein Tag** – was an einem Tag passiert ist: Kennzahlen, Verlauf (zeitlich oder nach Firma), 14-Tage-Diagramm, fällige Wiedervorlagen, Tagesbericht zum Kopieren.
+- **Mein Tag** – was an einem Tag passiert ist: Kennzahlen, Verlauf (zeitlich oder nach Firma), 14-Tage-Diagramm, fällige Wiedervorlagen und „Tagesliste als PDF“ (Anrufliste im BNIW-Layout zum Weiterschicken).
 - **Globale Suche** oben (Strg+K oder `/`) – findet Firmen, Personen, Telefonnummern und Notizen.
 
 ## Datenschutz
@@ -24,3 +24,6 @@ In Edge oder Chrome die App-Adresse öffnen → Symbol „App installieren“ in
 ## Veröffentlichen
 GitHub Pages veröffentlicht direkt aus dem Branch `claude/marias-crm-webapp-k4aoor`, Ordner `/ (root)`
 (*Settings → Pages → Deploy from a branch*). Jeder Push dorthin ist nach 1–2 Minuten online. Bei Änderungen an der App `VERSION` in `sw.js` hochzählen.
+
+## Drittanbieter
+`vendor/jspdf.umd.min.js` – [jsPDF](https://github.com/parallax/jsPDF) 2.5.2, MIT-Lizenz (PDF-Erzeugung im Browser).

@@ -1,7 +1,7 @@
 // Offline-Cache für die App-Dateien. Bei Änderungen an der App VERSION hochzählen.
-const VERSION = "bniw-crm-v4";
+const VERSION = "bniw-crm-v5";
 const FILES = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
-  "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
+  "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png", "vendor/jspdf.umd.min.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
