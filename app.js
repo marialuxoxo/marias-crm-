@@ -209,7 +209,7 @@ function noteSnippet(c, q){
 
 /* ---------- UI-Zustand & Routing ---------- */
 let view = "work", curId = null, filter = "todo", railQ = "";
-let listQ = "", listStatus = "alle", listSort = {k: "name", dir: 1}, listLimit = LIST_STEP;
+let seg = "all", listQ = "", listStatus = "alle", listSort = {k: "name", dir: 1}, listLimit = LIST_STEP;
 let dayK = today(), dayMode = "chrono", actKind = "Anruf", showPersonForm = false;
 
 function parseHash(){
@@ -308,9 +308,27 @@ function updateBackupHint(){
   $("backup").hidden = !(contacts.length && dirty && old);
 }
 
+/* ---------- Pipeline-Stufen (nach Anzahl der Versuche) ---------- */
+const STAGES = [
+  {k:"neu", l:"Noch nie angerufen", s:"Neu", c:"#94A3B8"},
+  {k:"n1", l:"1× nicht erreicht", s:"1×", c:"#7C8A9C"},
+  {k:"n2", l:"2× nicht erreicht", s:"2×", c:"#5E6E82"},
+  {k:"n3", l:"3× und öfter nicht erreicht", s:"3×+", c:"#3F4B5C"},
+  {k:"erreicht", l:"Erreicht", c:"#0C6E68"},
+  {k:"zusage", l:"Infos zugesagt", c:"#2E7D32"},
+  {k:"nein", l:"Kein Interesse", c:"#9A3B2E"}];
+function stageOf(id){
+  const r = get(id);
+  if (r.status === "offen") return "neu";
+  if (r.status === "nicht erreicht") { const n = Math.max(1, triesOf(id)); return n >= 3 ? "n3" : "n" + n; }
+  if (r.status === "Infos zugesagt") return "zusage";
+  if (r.status === "kein Interesse") return "nein";
+  return "erreicht";
+}
+
 /* ---------- Abarbeiten: Liste links ---------- */
 const isDue = r => r.followUp && r.followUp <= today() && r.status !== "kein Interesse";
-function filteredRail(){
+function filteredRail(ignoreSeg){
   const q = parseQ(railQ), td = today();
   const res = contacts.filter(c => {
     const r = get(c.id);
@@ -319,6 +337,7 @@ function filteredRail(){
     if (filter === "nicht" && r.status !== "nicht erreicht") return false;
     if (filter === "erreicht" && !REACHED.has(r.status)) return false;
     if (filter === "faellig" && !isDue(r)) return false;
+    if (!ignoreSeg && seg !== "all" && stageOf(c.id) !== seg) return false;
     return !q.terms.length || !!match(c, q);
   });
   const rk = railRank();
@@ -330,7 +349,7 @@ function filteredRail(){
    mitten im Abarbeiten ans Listenende schieben. */
 let rankKey = "", rankMap = new Map();
 function railRank(){
-  const td = today(), key = filter + "|" + railQ + "|" + td;
+  const td = today(), key = filter + "|" + seg + "|" + railQ + "|" + td;
   if (key === rankKey) return rankMap;
   const prio = c => { const r = get(c.id); if (isDue(r)) return 0; if (r.status === "nicht erreicht") return r.lastContact && r.lastContact < td ? 1 : 3; return 2; };
   rankMap = new Map(contacts.map((c, i) => [prio(c), i, c.id]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x, i) => [x[2], i]));
@@ -339,6 +358,12 @@ function railRank(){
 }
 function renderRail(){
   const td = today();
+  // Versuchs-Gruppen mit Anzahl (bezogen auf den gewählten Filter)
+  const cnt = {}; filteredRail(true).forEach(c => { const k = stageOf(c.id); cnt[k] = (cnt[k] || 0) + 1; });
+  const segs = STAGES.filter(x => x.s && (cnt[x.k] || seg === x.k));
+  $("segs").innerHTML = segs.length ? `<span class="tiny" style="align-self:center">Versuche:</span><button class="chip ${seg === "all" ? "on" : ""}" data-s="all">alle</button>` +
+    segs.map(x => `<button class="chip ${seg === x.k ? "on" : ""}" data-s="${x.k}" title="${esc(x.l)}">${x.s} <b>${cnt[x.k] || 0}</b></button>`).join("") : "";
+  $("segs").querySelectorAll("[data-s]").forEach(b => b.onclick = () => { seg = b.dataset.s; jumpIntoFilter(); render(); });
   const fl = filteredRail(); const list = $("list");
   const shown = fl.slice(0, RAIL_CAP);
   list.innerHTML = shown.map(c => {
@@ -410,7 +435,8 @@ function renderWork(){
     return `<div class="tl-item" style="--c:${evColor(e)}"><div class="tl-when">${longDate(dayKey(e.t))}${e.legacy ? "" : " · " + timeOf(e.t)}${e.legacy ? ' <span class="legacy">(aus Altdaten)</span>' : ""}</div>
       <div>${describe(e)}</div>${txt && e.type === "act" ? `<div class="tl-note">${esc(txt)}</div>` : ""}</div>`;
   }).join("") : `<div class="empty">Noch keine Aktivität.</div>`;
-  const posLbl = pos >= 0 ? `KONTAKT ${pos + 1} / ${fl.length}` : (REACHED.has(r.status) && filter === "todo" ? `ERREICHT ✓ – NICHT MEHR IN DER LISTE` : `AUSSERHALB DES FILTERS`);
+  const posLbl = pos >= 0 ? `KONTAKT ${pos + 1} / ${fl.length}` : (REACHED.has(r.status) && filter === "todo" ? `ERREICHT ✓ – NICHT MEHR IN DER LISTE`
+    : seg !== "all" ? `JETZT „${(STAGES.find(x => x.k === stageOf(curId)) || {}).l || r.status}“ – NICHT MEHR IN DIESER GRUPPE` : `AUSSERHALB DES FILTERS`);
 
   $("main").innerHTML = `<div class="rec">
    <div class="navrow"><span class="pos mono">${posLbl}</span>
@@ -562,6 +588,7 @@ const COLS = [
   {k:"ort", l:"ORT", v: c => c.ort},
   {k:"tel", l:"TELEFON", v: c => c.tel, cls:"hide-sm"},
   {k:"status", l:"STATUS", v: c => STATUS.findIndex(s => s.k === get(c.id).status)},
+  {k:"tries", l:"VERSUCHE", v: c => triesOf(c.id), cls:"hide-sm"},
   {k:"last", l:"LETZTER KONTAKT", v: c => get(c.id).lastContact || "", cls:"hide-sm"},
   {k:"fu", l:"WIEDERVORLAGE", v: c => get(c.id).followUp || "", cls:"hide-sm"},
   {k:"ma", l:"MA", v: c => Number(c.ma) || 0, cls:"hide-sm"},
@@ -571,7 +598,8 @@ function listRows(){
   const out = [];
   for (const c of contacts) {
     const r = get(c.id);
-    if (listStatus === "faellig") { if (!isDue(r)) continue; }
+    if (listStatus.startsWith("stage:")) { if (stageOf(c.id) !== listStatus.slice(6)) continue; }
+    else if (listStatus === "faellig") { if (!isDue(r)) continue; }
     else if (listStatus === "broschuere") { if (!r.broschuere.sent) continue; }
     else if (listStatus === "warteliste") { if (r.newsletter !== "Warteliste") continue; }
     else if (listStatus !== "alle" && r.status !== listStatus) continue;
@@ -592,9 +620,11 @@ function renderList(){
     main.innerHTML = `<div class="page">
       <div class="ptitle"><h1 class="serif">Kontakte</h1><span class="tiny" id="lcount"></span>
         <button class="btn small ml" id="newc">＋ Firma anlegen</button></div>
+      <div class="pipe" id="pipe"></div>
       <div class="filters">
         <div class="search">⌕<input id="lq" placeholder="Firma, Person, Ort, PLZ, Telefon oder Notizen durchsuchen…"></div>
         <select id="ls"><option value="alle">Alle Status</option>${STATUS.map(s => `<option value="${esc(s.k)}">${esc(s.k)}</option>`).join("")}
+          <optgroup label="Pipeline">${STAGES.map(x => `<option value="stage:${x.k}">${esc(x.l)}</option>`).join("")}</optgroup>
           <option value="faellig">⏰ Wiedervorlage fällig</option><option value="broschuere">📄 Broschüre gesendet</option><option value="warteliste">★ Warteliste</option></select>
       </div>
       <div class="tablewrap"><table><thead><tr id="lhead"></tr></thead><tbody id="lbody"></tbody></table></div>
@@ -606,7 +636,19 @@ function renderList(){
   $("lq").value = listQ; $("ls").value = listStatus;
   renderListBody();
 }
+function renderPipe(){
+  const cnt = {}; contacts.forEach(c => { const k = stageOf(c.id); cnt[k] = (cnt[k] || 0) + 1; });
+  const sel = listStatus.startsWith("stage:") ? listStatus.slice(6) : "";
+  const workable = ["neu", "n1", "n2", "n3"].includes(sel);
+  $("pipe").innerHTML = STAGES.map(x => `<button class="stage ${sel === x.k ? "on" : ""}" data-st="${x.k}" style="--c:${x.c}">
+      <span class="v">${cnt[x.k] || 0}</span><span class="l">${esc(x.l)}</span></button>`).join("")
+    + (workable ? `<button class="btn petrol small pwork" id="pwork">▶ Diese ${cnt[sel] || 0} abarbeiten</button>` : "");
+  $("pipe").querySelectorAll(".stage").forEach(b => b.onclick = () => {
+    listStatus = sel === b.dataset.st ? "alle" : "stage:" + b.dataset.st; listLimit = LIST_STEP; $("ls").value = listStatus; renderListBody(); });
+  if ($("pwork")) $("pwork").onclick = () => { setRailFilter("alle", sel); railQ = ""; $("q").value = ""; curId = null; location.hash = "#/"; };
+}
 function renderListBody(){
+  renderPipe();
   const {rows, q} = listRows();
   $("lcount").textContent = rows.length === contacts.length ? plural(contacts.length, "Firma", "Firmen") : `${rows.length} von ${contacts.length}`;
   $("lhead").innerHTML = COLS.map(c => `<th class="${c.cls || ""} ${listSort.k === c.k ? "sorted" : ""}" data-k="${c.k}">${c.l}${listSort.k === c.k ? (listSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("");
@@ -624,6 +666,7 @@ function renderListBody(){
       <td class="nowrap">${esc(c.plz)} ${esc(c.ort)}</td>
       <td class="nowrap hide-sm">${esc(c.tel)}</td>
       <td class="nowrap"><span class="dot" style="background:${sc(r.status)}"></span> ${esc(r.status)}</td>
+      <td class="hide-sm">${triesOf(c.id) ? `📵 ${triesOf(c.id)}×` : ""}</td>
       <td class="nowrap hide-sm">${fmt(r.lastContact)}</td>
       <td class="nowrap hide-sm">${r.followUp ? (isDue(r) ? `<span class="badge due">${fmt(r.followUp)}</span>` : fmt(r.followUp)) : ""}</td>
       <td class="hide-sm">${esc(c.ma)}</td></tr>`;
@@ -711,7 +754,7 @@ function renderDay(){
   document.querySelectorAll(".bcol").forEach(b => b.onclick = () => go(b.dataset.d));
   document.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { dayMode = b.dataset.m; renderDay(); });
   document.querySelectorAll("[data-done]").forEach(b => b.onclick = () => { const id = b.dataset.done; rec(id).followUp = ""; logEv(id, "followup", {to: ""}); save(); renderDay(); });
-  if ($("gowork")) $("gowork").onclick = () => { filter = "todo"; document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.f === "todo")); };
+  if ($("gowork")) $("gowork").onclick = () => { setRailFilter("todo", "all"); };
   $("dcopy").onclick = () => exportDayPdf(k);
 }
 
@@ -1011,8 +1054,16 @@ $("gq").onkeydown = e => {
 
 /* ---------- Statische Bedienelemente ---------- */
 $("q").oninput = e => { railQ = e.target.value; renderRail(); renderWork(); };
-$("chips").querySelectorAll(".chip").forEach(b => b.onclick = () => {
-  filter = b.dataset.f; document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x === b)); render(); });
+function setRailFilter(f, s){
+  filter = f; if (s) seg = s;
+  document.querySelectorAll("#chips .chip").forEach(x => x.classList.toggle("on", x.dataset.f === f));
+}
+/** Nach Filterwechsel: steht der offene Kontakt nicht in der neuen Liste, beim ersten Treffer starten */
+function jumpIntoFilter(){
+  const f = filteredRail();
+  if (f.length && !f.some(x => x.id === curId)) { curId = f[0].id; history.replaceState(null, "", "#/kontakt/" + encodeURIComponent(curId)); }
+}
+$("chips").querySelectorAll(".chip").forEach(b => b.onclick = () => { setRailFilter(b.dataset.f); jumpIntoFilter(); render(); });
 $("menu").onclick = () => $("rail").classList.toggle("hidden");
 $("backup").onclick = exportAll;
 window.addEventListener("keydown", e => {
