@@ -330,7 +330,7 @@ function filteredRail(){
    mitten im Abarbeiten ans Listenende schieben. */
 let rankKey = "", rankMap = new Map();
 function railRank(){
-  const td = today(), key = filter + "|" + railQ + "|" + td + "|" + contacts.length;
+  const td = today(), key = filter + "|" + railQ + "|" + td;
   if (key === rankKey) return rankMap;
   const prio = c => { const r = get(c.id); if (isDue(r)) return 0; if (r.status === "nicht erreicht") return r.lastContact && r.lastContact < td ? 1 : 3; return 2; };
   rankMap = new Map(contacts.map((c, i) => [prio(c), i, c.id]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x, i) => [x[2], i]));
@@ -419,7 +419,9 @@ function renderWork(){
      <span class="dot" style="margin-top:9px;width:10px;height:10px;background:${sc(r.status)}"></span>
      <div style="min-width:0;flex:1"><h1 class="cname serif">${esc(c.name)}</h1>
      <p class="cmeta">${esc(gfName(c.gf)) || "—"} · Geschäftsführung &nbsp;|&nbsp; ${esc(c.plz)} ${esc(c.ort)}${c.ma !== "" && c.ma != null ? ` &nbsp;|&nbsp; ${esc(c.ma)} Mitarbeiter` : ""}</p></div>
-     <button class="linkbtn" id="edit" title="Stammdaten bearbeiten">✎ Bearbeiten</button></div>
+     <span style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+       <button class="linkbtn" id="edit" title="Stammdaten bearbeiten">✎ Bearbeiten</button>
+       <button class="linkbtn" id="del" style="color:var(--red)" title="Firma aus der Liste löschen (z. B. keine Immobilienverwaltung)">🗑 Entfernen</button></span></div>
      <div class="actions">
        <a class="act call ${c.tel ? "" : "dis"}" id="callcopy" title="Nummer kopieren">📞 ${esc(c.tel) || "keine Nummer"}</a>
        <a class="act ${web ? "" : "dis"}" href="${esc(web)}" target="_blank" rel="noreferrer">🌐 Website</a>
@@ -484,6 +486,7 @@ function renderWork(){
   const cc = $("callcopy");
   if (c.tel) cc.onclick = () => { copyText(c.tel); const o = cc.innerHTML; cc.innerHTML = "✓ kopiert"; setTimeout(() => { cc.innerHTML = o; }, 1200); };
   $("edit").onclick = () => editCompany(curId);
+  $("del").onclick = () => deleteCompany(curId);
   document.querySelectorAll("[data-copy]").forEach(a => a.onclick = ev => { ev.preventDefault(); copyText(a.dataset.copy); toast("Nummer kopiert"); });
   document.querySelectorAll("[data-delp]").forEach(b => b.onclick = () => {
     const p = r2().people[+b.dataset.delp]; if (p && confirm(`Ansprechpartner „${p.name}" entfernen?`)) { r2().people.splice(+b.dataset.delp, 1); save(); render(); } });
@@ -505,6 +508,24 @@ function renderWork(){
   $("acttext").onkeydown = e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveAct(); } };
 }
 
+/* ---------- Firma löschen ---------- */
+/** Löscht eine Firma und bleibt beim Abarbeiten an derselben Stelle der Liste */
+function deleteCompany(id){
+  const c = byId.get(id);
+  if (!c || !confirm(`„${c.name}" wirklich aus der Liste löschen? Status und Notizen gehen verloren.`)) return false;
+  // Nachfolger bestimmen, solange die Firma noch in der Liste steht
+  const f = filteredRail(), p = f.findIndex(x => x.id === id);
+  let next = p >= 0 ? (f[p + 1] || f[p - 1]) : null;
+  if (p < 0) { const rk = railRank(), mine = rk.get(id) ?? -1; next = f.find(x => (rk.get(x.id) ?? 1e9) > mine) || f[f.length - 1]; }
+  contacts = contacts.filter(x => x.id !== id); delete records[id]; reindex(); save();
+  curId = next ? next.id : null;
+  if (view === "work") history.replaceState(null, "", curId ? "#/kontakt/" + encodeURIComponent(curId) : "#/");
+  showPersonForm = false;
+  render(); $("main").scrollTop = 0;
+  toast(`„${c.name}" gelöscht`);
+  return true;
+}
+
 /* ---------- Firma anlegen / bearbeiten ---------- */
 function editCompany(id){
   const c = id ? byId.get(id) : {name:"",gf:"",plz:"",ort:"",tel:"",website:"",ma:""};
@@ -521,8 +542,7 @@ function editCompany(id){
   $("ccancel").onclick = close;
   m.onclick = e => { if (e.target === m) close(); };
   if ($("cdel")) $("cdel").onclick = () => {
-    if (!confirm(`„${c.name}" wirklich löschen? Status und Notizen gehen verloren.`)) return;
-    contacts = contacts.filter(x => x.id !== id); delete records[id]; reindex(); curId = null; save(); close(); location.hash = "#/liste"; render();
+    if (deleteCompany(id)) close();
   };
   $("cform").onsubmit = e => {
     e.preventDefault(); const v = e.target.elements;
